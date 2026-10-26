@@ -51,7 +51,7 @@ Windows 下把 `cp -r` 换成 `Copy-Item -Recurse` 即可。
 node --test dev-rules/scripts/merge-back.test.mjs
 ```
 
-需要 Node.js 18+（脚本用到 `node:test` 与 ESM）。
+需要 Node.js 20.11+（测试用到 `node:test` 与 `import.meta.dirname`）。
 
 ## 新增 skill
 
