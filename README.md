@@ -6,7 +6,7 @@
 
 | Skill | 说明 |
 |---|---|
-| [dev-rules](./dev-rules/SKILL.md) | 通用开发规则：初始化检查、任务分流、安全风险提示、worktree 隔离、文档归属、提交禁令、收尾审查，共七条，不限技术栈。附带 `merge-back.mjs`，用于把 worktree 里的改动串行回流到主工作区。 |
+| [dev-rules](./dev-rules/SKILL.md) | 通用开发规则：初始化检查、任务分流、安全风险提示、worktree 隔离、文档归属、提交禁令、收尾审查、子任务派发，共八条，不限技术栈。附带 `merge-back.mjs`，用于把 worktree 里的改动串行回流到主工作区。 |
 
 ## 目录结构
 

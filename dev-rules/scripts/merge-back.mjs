@@ -20,7 +20,8 @@ const USAGE = `用法:
   --json              以 JSON 输出结果
   --lock-timeout <毫秒>  等待另一个回流结束的时间，默认 30000，0 表示不等待
 
-退出码: 0 干净合并 / 1 存在冲突 / 2 执行失败（主工作区未被改动）`;
+退出码: 0 干净合并 / 1 存在冲突 / 2 执行失败（参数、环境或补丁问题时不改动主工作区）
+成功回流后 patch 改名为 <名称>.patch.applied；冲突或失败时保留原名，便于重试。`;
 
 function parseArgs(argv) {
   const opts = { tasks: [], all: false, keep: false, json: false };
@@ -147,6 +148,20 @@ function writeFileEnsuringDir(file, content) {
   fs.writeFileSync(file, content);
 }
 
+// 已合入的 patch 改名存档，避免 --all 或手工重跑时重复应用
+function archiveApplied(patchFiles) {
+  for (const file of patchFiles) {
+    let dest = `${file}.applied`;
+    let n = 1;
+    while (fs.existsSync(dest)) dest = `${file}.applied.${n++}`;
+    try {
+      fs.renameSync(file, dest);
+    } catch (e) {
+      process.stderr.write(`merge-back: patch 已合入但改名失败 ${file}: ${e.message}\n`);
+    }
+  }
+}
+
 const STALE_LOCK_MS = 10 * 60 * 1000;
 
 function sleepSync(ms) {
@@ -165,13 +180,19 @@ function acquireLock(dir, timeoutMs) {
       return lock;
     } catch (e) {
       if (e.code !== 'EEXIST') throw e;
-      let stat;
-      try {
-        stat = fs.statSync(lock);
-      } catch {
-        continue;
+      let stale = false;
+      const pid = readLockPid(lock);
+      if (pid !== null && !pidAlive(pid)) {
+        stale = true;
+      } else if (pid === null) {
+        // 老版本或异常写入的锁没有 pid，只能按 mtime 兜底
+        try {
+          stale = Date.now() - fs.statSync(lock).mtimeMs > STALE_LOCK_MS;
+        } catch {
+          continue;
+        }
       }
-      if (Date.now() - stat.mtimeMs > STALE_LOCK_MS) {
+      if (stale) {
         fs.rmSync(lock, { force: true });
         continue;
       }
@@ -180,6 +201,22 @@ function acquireLock(dir, timeoutMs) {
       }
       sleepSync(200);
     }
+  }
+}
+
+function readLockPid(lock) {
+  const buf = readOrNull(lock);
+  if (buf === null) return null;
+  const pid = Number.parseInt(buf.toString('utf8').trim(), 10);
+  return Number.isInteger(pid) && pid > 0 ? pid : null;
+}
+
+function pidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code !== 'ESRCH';
   }
 }
 
@@ -320,6 +357,7 @@ function main() {
     }
 
     const conflicting = results.filter((r) => r.action === 'conflict');
+    if (conflicting.length === 0) archiveApplied(patchFiles);
     if (opts.json) {
       process.stdout.write(JSON.stringify({ base, results, conflicts: conflicting.length }, null, 2) + '\n');
     } else {
@@ -351,10 +389,7 @@ function main() {
 try {
   main();
 } catch (e) {
-  if (e instanceof UserError) {
-    process.stderr.write(`merge-back: ${e.message}\n`);
-    process.exitCode = 2;
-  } else {
-    throw e;
-  }
+  const message = e instanceof UserError ? e.message : (e && e.stack) || String(e);
+  process.stderr.write(`merge-back: ${message}\n`);
+  process.exitCode = 2;
 }

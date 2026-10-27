@@ -216,6 +216,40 @@ test('--all applies every patch in the default patch directory', () => {
   assert.match(read(repo, 'b.txt'), /B/);
 });
 
+test('archives applied patches so --all cannot reapply them', () => {
+  const { root, repo } = makeRepo();
+  makePatch(repo, root, 't1', (wt) =>
+    fs.writeFileSync(path.join(wt, 'a.txt'), 'l1\nl2\nA\nl4\nl5\n'),
+  );
+  const dir = path.join(repo, '.git', 'agent-patches');
+
+  const first = runMerge(repo, ['--task', 't1']);
+  assert.equal(first.status, 0, first.stderr);
+  assert.equal(fs.existsSync(path.join(dir, 't1.patch')), false);
+  assert.equal(fs.existsSync(path.join(dir, 't1.patch.applied')), true);
+
+  const second = runMerge(repo, ['--all']);
+  assert.equal(second.status, 2);
+  assert.match(second.stderr, /patch 目录为空/);
+});
+
+test('keeps patches when the merge has conflicts', () => {
+  const { root, repo } = makeRepo();
+  makePatch(repo, root, 't1', (wt) =>
+    fs.writeFileSync(path.join(wt, 'a.txt'), 'l1\nl2\nP1\nl4\nl5\n'),
+  );
+  makePatch(repo, root, 't2', (wt) =>
+    fs.writeFileSync(path.join(wt, 'a.txt'), 'l1\nl2\nP2\nl4\nl5\n'),
+  );
+  const dir = path.join(repo, '.git', 'agent-patches');
+
+  const r = runMerge(repo, ['--task', 't1', '--task', 't2']);
+
+  assert.equal(r.status, 1);
+  assert.equal(fs.existsSync(path.join(dir, 't1.patch')), true);
+  assert.equal(fs.existsSync(path.join(dir, 't2.patch')), true);
+});
+
 test('refuses to merge while another merge-back holds the lock', () => {
   const { root, repo } = makeRepo();
   makePatch(repo, root, 't1', (wt) =>
@@ -258,6 +292,21 @@ test('takes over a stale lock', () => {
   fs.utimesSync(lock, old, old);
 
   const r = runMerge(repo, ['--task', 't1']);
+
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(read(repo, 'a.txt'), /A/);
+});
+
+test('takes over a lock whose pid is gone without waiting for the mtime timeout', () => {
+  const { root, repo } = makeRepo();
+  makePatch(repo, root, 't1', (wt) =>
+    fs.writeFileSync(path.join(wt, 'a.txt'), 'l1\nl2\nA\nl4\nl5\n'),
+  );
+  const dead = spawnSync(process.execPath, ['-e', '0']);
+  const lock = path.join(repo, '.git', 'agent-patches', '.merge-back.lock');
+  fs.writeFileSync(lock, String(dead.pid ?? 999999));
+
+  const r = runMerge(repo, ['--task', 't1', '--lock-timeout', '0']);
 
   assert.equal(r.status, 0, r.stderr);
   assert.match(read(repo, 'a.txt'), /A/);
