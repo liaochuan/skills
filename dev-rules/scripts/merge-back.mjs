@@ -97,8 +97,11 @@ function eolOf(buf) {
 }
 
 function applyEol(buf, eol) {
-  if (eol === '\n') return buf;
-  return Buffer.from(buf.toString('utf8').replace(/\n/g, '\r\n'), 'utf8');
+  // 先归一成 LF 再按目标行尾重写，保证幂等。直接 replace(/\n/g, '\r\n') 会把已经带 CRLF 的内容
+  // （Windows 上 core.autocrlf=true 时 worktree 检出、git apply --3way 写出的都是 CRLF）
+  // 变成 \r\r\n，渲染时每行多出一个空行，整个文件在 diff 里看起来被重写。
+  const lf = buf.toString('utf8').replace(/\r\n/g, '\n');
+  return Buffer.from(eol === '\r\n' ? lf.replace(/\n/g, '\r\n') : lf, 'utf8');
 }
 
 function blobAt(repo, base, file) {
@@ -252,7 +255,9 @@ function mergeIntoWorktree({ repo, tmp, base, file, conflicted }) {
   if (same(ours, theirs)) return { file, action: 'unchanged' };
 
   if (same(ours, baseBuf)) {
-    writeFileEnsuringDir(target, applyEol(theirs, eolOf(ours)));
+    // 二进制文件按字节原样写回，不做行尾转换（转换会破坏 0x0D/0x0A 字节序列）。
+    const binary = isBinary(ours) || isBinary(theirs);
+    writeFileEnsuringDir(target, binary ? theirs : applyEol(theirs, eolOf(ours)));
     return { file, action: 'merged' };
   }
 

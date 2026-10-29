@@ -281,6 +281,43 @@ test('releases the lock after a successful merge', () => {
   );
 });
 
+test('keeps CRLF worktree line endings without doubling the carriage return', () => {
+  const { root, repo } = makeRepo();
+  // 模拟 Windows 默认 core.autocrlf=true：索引里是 LF，检出到工作区是 CRLF
+  git(repo, ['config', 'core.autocrlf', 'true']);
+  fs.rmSync(path.join(repo, 'a.txt'));
+  git(repo, ['checkout', '--', 'a.txt']);
+  assert.match(fs.readFileSync(path.join(repo, 'a.txt'), 'latin1'), /\r\n/);
+
+  makePatch(repo, root, 't1', (wt) =>
+    fs.writeFileSync(path.join(wt, 'a.txt'), 'l1\r\nl2\r\nCHANGED\r\nl4\r\nl5\r\n'),
+  );
+
+  const r = runMerge(repo, ['--task', 't1']);
+
+  assert.equal(r.status, 0, r.stderr);
+  const raw = fs.readFileSync(path.join(repo, 'a.txt'), 'latin1');
+  assert.equal(raw, 'l1\r\nl2\r\nCHANGED\r\nl4\r\nl5\r\n');
+  assert.equal((raw.match(/\r\r\n/g) || []).length, 0);
+  assert.equal(git(repo, ['status', '--porcelain']), ' M a.txt\n');
+});
+
+test('writes binary files back byte for byte', () => {
+  const { root, repo } = makeRepo();
+  const base = Buffer.from([0x00, 0x0d, 0x0a, 0xff, 0x0d, 0x0a]);
+  fs.writeFileSync(path.join(repo, 'bin.dat'), base);
+  git(repo, ['add', 'bin.dat']);
+  git(repo, ['commit', '-qm', 'bin']);
+
+  const next = Buffer.from([0x00, 0x0d, 0x0a, 0xff, 0xfe, 0x0d, 0x0a]);
+  makePatch(repo, root, 't1', (wt) => fs.writeFileSync(path.join(wt, 'bin.dat'), next));
+
+  const r = runMerge(repo, ['--task', 't1']);
+
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(fs.readFileSync(path.join(repo, 'bin.dat')), next);
+});
+
 test('takes over a stale lock', () => {
   const { root, repo } = makeRepo();
   makePatch(repo, root, 't1', (wt) =>
