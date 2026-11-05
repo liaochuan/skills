@@ -98,8 +98,8 @@ description: 当任务涉及任何软件项目（后端、前端、客户端、�
 
 **除规则一补建的项目约定文件、项目级根文件与回流脚本外，任何写文件的操作都在独立 worktree 里进行。** 你无法知道外部是否还开着别的窗口，所以隔离是默认行为，不是可选项，也不需要先判断「有没有并发」。
 
-1. 建：`git worktree add --detach <worktree 路径> <base>`，默认 `.worktree/<task>`；`<base>` 取当前 `HEAD` 并记住；任务名用简短 ASCII（如 `task-20261023-1`），不要复用（同名 patch 会被静默覆盖）
-2. 路径选择：沙箱允许时优先建在仓库外（如 `../.worktrees/<repo>/<task>`），否则测试 glob 会扫到一份副本；只能建在仓库内时，先把 `.worktree/` 追加到 `.git/info/exclude`（只影响本地，不动 tracked 的 `.gitignore`）
+1. 建：`git worktree add --detach <worktree 路径> <base>`，默认 `<仓库根>/.worktree/<task>`；`<base>` 取当前 `HEAD` 并记住；任务名用简短 ASCII（如 `task-20261023-1`），不要复用（同名 patch 会被静默覆盖）
+2. 路径选择：`<仓库根>` 用 `git rev-parse --show-toplevel` 求。默认建在仓库根之下（`.worktree/<task>`），建之前先把 `.worktree/` 追加到 `.git/info/exclude`（只影响本地，不动 tracked 的 `.gitignore`），避免 `git status` 噪音与误提交。仓库内的副本可能被递归源码/测试 glob（ktlint、detekt、pytest、`node --test` 等）或 IDE 索引扫到，因此跑测试用显式路径（见第 3 条）；若项目属于这类场景且沙箱允许，可改用仓库外路径（如 `../.worktrees/<repo>/<task>`），但须先取得用户同意并在报告中注明。其余情况不得建到父目录或仓库根之外
 3. 建完立即写任务元数据（见下）；之后所有读写、测试、导出 patch 都在该目录内执行；跑测试用显式路径，不在主工作区跑全量 glob
 4. 只改本次任务范围内的文件，不顺手改无关代码
 5. worktree 内可 `git add -N .` 让新增文件进入 diff（只影响该 worktree 的 index）；**禁止**在主工作区执行 `git add`
@@ -120,7 +120,7 @@ git diff --binary "HEAD" "--output=<repo>/.git/agent-patches/<task>.patch"
 |---|---|
 | 项目不是 git 仓库 | 降级直接改，报告注明"未隔离" |
 | 尚无首次提交（没有可用的 `HEAD`） | 降级直接改，但先说明原因并取得同意 |
-| 仓库内路径不可用、沙箱允许仓库外 | 改用 `../.worktrees/<repo>/<task>` |
+| 仓库内路径不可用，或递归 glob / IDE 索引冲突 | 停下报告原因；经用户同意且沙箱允许后，改用仓库外路径（如 `../.worktrees/<repo>/<task>`） |
 | 目标路径已存在 | 换任务名（追加 `-2`），不复用、不删除已有目录 |
 | `git worktree add` 失败（权限 / 磁盘 / 路径过长） | 停下报告原因，不擅自降级为直接改；用户同意后才降级 |
 
@@ -257,6 +257,7 @@ node "<skill 目录>/scripts/merge-back.mjs" --repo <项目> --base <base> --all
 | "任务很清楚，不用拆" | 清楚不等于一次装得下；体量本身就是升级条件 |
 | "文件拆开了就不会漂移" | 防漂移靠 spec + plan + ledger；拆得不好只是把上下文丢失换成接口漂移 |
 | "都在同一个目录改，反正文件不一样" | 看不到外部窗口，隔离不能靠判断，只能靠默认执行 |
+| "建到仓库外更干净，测试不会扫到" | 只有递归 glob / IDE 索引确实冲突且用户同意时才用；默认仍守住仓库根 |
 | "只有我一个人在改，不用建 worktree" | 是否还有别的窗口不由你判断，统一走 worktree 成本只有几秒 |
 | "先 commit 再合并更省事" | 提交由用户发起，回流不需要 commit |
 | "项目太小，不用 AGENTS.md" | 约定越少越容易写在几句话里；缺就问一次，成本一句话 |
@@ -279,6 +280,7 @@ node "<skill 目录>/scripts/merge-back.mjs" --repo <项目> --base <base> --all
 - 在项目根目录新建 `AGENTS.md` 或改语言设置
 - 还没导出 patch 就清理 worktree，或在主工作区执行 `git add`
 - 没建 worktree 就开始写文件
+- 把 worktree 建到仓库根之外（父目录、`../.worktrees/` 等），却没有递归 glob / 索引冲突理由或用户同意
 - 计划已超过约 10 个任务仍未拆分，或拆分时没先固定共享接口与全局约束
 - 凭记忆接着做上一个任务，没回读计划文件
 - 派发子任务时传了与当前会话不同的 `model`，却没先提示
